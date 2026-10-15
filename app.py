@@ -3,12 +3,22 @@ import pandas as pd
 from datetime import datetime, timedelta
 import random
 
-# Try importing fast_flights for live Google Flights scraping without an API key
+# Support both fast-flights v3.x (newest) and v2.x
+FAST_FLIGHTS_AVAILABLE = False
+FF_VERSION = None
+IMPORT_ERROR_MSG = ""
+
 try:
-    from fast_flights import FlightData, Passengers, create_filter, get_flights
+    from fast_flights import FlightQuery, Passengers, create_query, get_flights
     FAST_FLIGHTS_AVAILABLE = True
+    FF_VERSION = 3
 except ImportError:
-    FAST_FLIGHTS_AVAILABLE = False
+    try:
+        from fast_flights import FlightData, Passengers, create_filter, get_flights
+        FAST_FLIGHTS_AVAILABLE = True
+        FF_VERSION = 2
+    except Exception as e:
+        IMPORT_ERROR_MSG = str(e)
 
 st.set_page_config(
     page_title="RMO ⇄ DE Deal Radar",
@@ -20,14 +30,13 @@ st.set_page_config(
 AIRPORT_MD = "RMO"  # Official IATA code for Chișinău
 
 # Typical direct flight operating weekdays (0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun)
-# Used in "Smart Direct Days" mode to cut scan times by ~75%
 DIRECT_SCHEDULES = {
     "DTM": [1, 3, 5, 6],       # Wizz Air (typically Tue, Thu, Sat, Sun)
     "CGN": [0, 2, 4, 5, 6],    # Wizz Air / Eurowings (typically Mon, Wed, Fri, Sat, Sun)
     "DUS": [1, 3, 4, 6],       # HiSky / FlyOne (typically Tue, Thu, Fri, Sun)
 }
 
-# --- HELPER: MOCK DATA GENERATOR (For Instant UI Testing) ---
+# --- HELPER: MOCK DATA GENERATOR ---
 def generate_demo_deals(max_price: int, min_days: int, max_days: int, months: int):
     deals = []
     today = datetime.now().date()
@@ -82,6 +91,39 @@ def generate_demo_deals(max_price: int, min_days: int, max_days: int, months: in
         )
     return df
 
+# --- HELPER: UNIVERSAL FLIGHT PARSER (v2 & v3) ---
+def run_single_flight_search(origin: str, dest: str, dep_str: str, ret_str: str, max_price: int):
+    if FF_VERSION == 3:
+        query = create_query(
+            flights=[
+                FlightQuery(date=dep_str, from_airport=origin, to_airport=dest),
+                FlightQuery(date=ret_str, from_airport=dest, to_airport=origin),
+            ],
+            trip="round-trip",
+            seat="economy",
+            passengers=Passengers(adults=1),
+            currency="EUR",
+            max_price=max_price
+        )
+        res = get_flights(query)
+    else:
+        filter_obj = create_filter(
+            flight_data=[
+                FlightData(date=dep_str, from_airport=origin, to_airport=dest),
+                FlightData(date=ret_str, from_airport=dest, to_airport=origin),
+            ],
+            trip="round-trip",
+            seat="economy",
+            passengers=Passengers(adults=1),
+        )
+        res = get_flights(filter_obj, currency="EUR")
+
+    if hasattr(res, "flights"):
+        return res.flights
+    elif isinstance(res, list):
+        return res
+    return []
+
 # --- HELPER: FAST SMART LIVE SCANNER ---
 def fetch_live_deals_smart(
     selected_airports: list,
@@ -96,7 +138,6 @@ def fetch_live_deals_smart(
     today = datetime.now().date()
     total_days_to_scan = months_ahead * 30
     
-    # Pre-build valid search pairs so we only query days that match the filter
     search_queue = []
     for de_ap in selected_airports:
         valid_weekdays = DIRECT_SCHEDULES.get(de_ap, [0, 1, 2, 3, 4, 5, 6])
@@ -130,39 +171,47 @@ def fetch_live_deals_smart(
         status_text.text(f"[{idx+1}/{total_queries}] Checking {origin} ⇄ {dest} | {dep_str} to {ret_str} ({duration}d)...")
         
         try:
-            filter_obj = create_filter(
-                flight_data=[
-                    FlightData(date=dep_str, from_airport=origin, to_airport=dest),
-                    FlightData(date=ret_str, from_airport=dest, to_airport=origin),
-                ],
-                trip="round-trip",
-                seat="economy",
-                passengers=Passengers(adults=1),
-            )
-            result = get_flights(filter_obj, currency="EUR")
+            flight_list = run_single_flight_search(origin, dest, dep_str, ret_str, max_price)
             
-            for flight in result.flights:
-                raw_price = "".join(c for c in str(flight.price) if c.isdigit())
-                if raw_price:
-                    price_val = int(raw_price)
-                    if price_val <= max_price:
-                        gf_link = (
-                            f"https://www.google.com/travel/flights?q=Flights%20to%20{dest}%20"
-                            f"from%20{origin}%20on%20{dep_str}%20through%20{ret_str}"
-                        )
-                        deals.append({
-                            "Direction": dir_label,
-                            "Airport DE": de_ap,
-                            "Route": f"{origin} ⇄ {dest}",
-                            "Outbound": dep_date.strftime("%a, %d.%m.%Y"),
-                            "Return": ret_date.strftime("%a, %d.%m.%Y"),
-                            "SortDate": dep_date,
-                            "Trip Length": f"{duration} Days",
-                            "Airline": flight.name,
-                            "Type": "Direct" if flight.stops == 0 else f"{flight.stops} Stop(s)",
-                            "Total Price (€)": price_val,
-                            "Booking Link": gf_link
-                        })
+            for flight in flight_list:
+                # Extract price across v2 and v3 formats
+                raw_price_attr = getattr(flight, "price", None)
+                if isinstance(raw_price_attr, (int, float)):
+                    price_val = int(raw_price_attr)
+                else:
+                    digits = "".join(c for c in str(raw_price_attr or "") if c.isdigit())
+                    price_val = int(digits) if digits else 9999
+
+                if 0 < price_val <= max_price:
+                    # Extract airline name across v2 (.name) and v3 (.airlines list)
+                    if hasattr(flight, "airlines") and flight.airlines:
+                        airline_name = ", ".join(flight.airlines) if isinstance(flight.airlines, list) else str(flight.airlines)
+                    else:
+                        airline_name = getattr(flight, "name", "Airline")
+
+                    # Extract stops across v2 (.stops) and v3 (.flights leg list)
+                    stops_val = getattr(flight, "stops", None)
+                    if stops_val is None and hasattr(flight, "flights") and isinstance(flight.flights, list):
+                        stops_val = max(0, len(flight.flights) - 1)
+                    stops_label = "Direct" if (stops_val == 0 or stops_val is None) else f"{stops_val} Stop(s)"
+
+                    gf_link = (
+                        f"https://www.google.com/travel/flights?q=Flights%20to%20{dest}%20"
+                        f"from%20{origin}%20on%20{dep_str}%20through%20{ret_str}"
+                    )
+                    deals.append({
+                        "Direction": dir_label,
+                        "Airport DE": de_ap,
+                        "Route": f"{origin} ⇄ {dest}",
+                        "Outbound": dep_date.strftime("%a, %d.%m.%Y"),
+                        "Return": ret_date.strftime("%a, %d.%m.%Y"),
+                        "SortDate": dep_date,
+                        "Trip Length": f"{duration} Days",
+                        "Airline": airline_name,
+                        "Type": stops_label,
+                        "Total Price (€)": price_val,
+                        "Booking Link": gf_link
+                    })
         except Exception:
             continue
 
@@ -187,7 +236,7 @@ with st.sidebar:
     st.header("⚙️ Search Settings")
     data_mode = st.radio(
         "Mode",
-        ["Demo Mode (Instant Preview)", "Live Scan (Google Flights)"]
+        ["Live Scan (Google Flights)", "Demo Mode (Instant Preview)"]
     )
     
     max_price = st.slider("Max Round-Trip Price (€)", min_value=30, max_value=150, value=100, step=5)
@@ -222,8 +271,8 @@ with st.sidebar:
         )
         months_to_scan = st.slider(
             "Horizon (Months ahead)",
-            min_value=1, max_value=3, value=2,
-            help="Scanning 1-2 months ahead is much faster; increase to 3 for a full quarter scan."
+            min_value=1, max_value=3, value=1,
+            help="Start with 1 month for a fast ~25-second scan on your phone, or slide up to 3 months for a full quarter scan."
         )
         run_live = st.button("🚀 Start Fast Live Scan", type="primary", use_container_width=True)
     else:
@@ -237,7 +286,7 @@ if data_mode == "Demo Mode (Instant Preview)":
         df = df[df["Airport DE"].isin(airport_filter)]
 else:
     if not FAST_FLIGHTS_AVAILABLE:
-        st.error("Package `fast-flights` is missing. Run `pip install fast-flights` in your command prompt.")
+        st.error(f"Could not load `fast-flights`. Details: {IMPORT_ERROR_MSG}")
         st.stop()
     if run_live:
         df = fetch_live_deals_smart(
@@ -255,7 +304,7 @@ else:
 # --- DISPLAY RESULTS ---
 if df.empty:
     if data_mode == "Live Scan (Google Flights)" and not run_live:
-        st.info("👈 Select your airports in the sidebar and click **Start Fast Live Scan**.")
+        st.info("👈 Tap the **>>** arrow in the top-left corner to open filters, then tap **🚀 Start Fast Live Scan**.")
     else:
         st.warning(f"No round-trip flights found under {max_price} € for your selected filters.")
 else:
