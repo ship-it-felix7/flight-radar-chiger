@@ -11,7 +11,7 @@ except ImportError:
     FAST_FLIGHTS_AVAILABLE = False
 
 st.set_page_config(
-    page_title="RMO ⇄ DE Deal Radar",
+    page_title="RMO ⇄ DE Deal Radar: for Vlalix",
     page_icon="✈️",
     layout="wide"
 )
