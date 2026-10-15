@@ -11,7 +11,7 @@ except ImportError:
     FAST_FLIGHTS_AVAILABLE = False
 
 st.set_page_config(
-    page_title="RMO ⇄ DE Deal Radar: for Vlalix",
+    page_title="RMO ⇄ DE Deal Radar",
     page_icon="✈️",
     layout="wide"
 )
@@ -178,7 +178,7 @@ def fetch_live_deals_smart(
 
 
 # --- UI LAYOUT ---
-st.title("✈️ Deal Radar: Chișinău (RMO) ⇄ CGN / DUS / DTM")
+st.title("✈️ Deal Radar for Vlalix: Chișinău (RMO) ⇄ CGN / DUS / DTM")
 st.markdown(
     "Finds **round-trip flights** (3 to 7 days) under **100 €** across **Cologne (CGN)**, **Düsseldorf (DUS)**, and **Dortmund (DTM)**."
 )
