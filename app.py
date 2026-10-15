@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import random
-pip install fast-flights
+$ pip install fast-flights
 
 # Try importing fast_flights for live Google Flights scraping without an API key
 try:
