@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import random
 
-# Try importing fast_flights for live Google Flights scraping without an API key
+# Import fast_flights for live Google Flights scraping
 try:
     from fast_flights import FlightData, Passengers, create_filter, get_flights
     FAST_FLIGHTS_AVAILABLE = True
@@ -20,14 +20,13 @@ st.set_page_config(
 AIRPORT_MD = "RMO"  # Official IATA code for Chișinău
 
 # Typical direct flight operating weekdays (0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun)
-# Used in "Smart Direct Days" mode to cut scan times by ~75%
 DIRECT_SCHEDULES = {
     "DTM": [1, 3, 5, 6],       # Wizz Air (typically Tue, Thu, Sat, Sun)
     "CGN": [0, 2, 4, 5, 6],    # Wizz Air / Eurowings (typically Mon, Wed, Fri, Sat, Sun)
     "DUS": [1, 3, 4, 6],       # HiSky / FlyOne (typically Tue, Thu, Fri, Sun)
 }
 
-# --- HELPER: MOCK DATA GENERATOR (For Instant UI Testing) ---
+# --- HELPER: MOCK DATA GENERATOR ---
 def generate_demo_deals(max_price: int, min_days: int, max_days: int, months: int):
     deals = []
     today = datetime.now().date()
@@ -96,7 +95,6 @@ def fetch_live_deals_smart(
     today = datetime.now().date()
     total_days_to_scan = months_ahead * 30
     
-    # Pre-build valid search pairs so we only query days that match the filter
     search_queue = []
     for de_ap in selected_airports:
         valid_weekdays = DIRECT_SCHEDULES.get(de_ap, [0, 1, 2, 3, 4, 5, 6])
@@ -178,7 +176,7 @@ def fetch_live_deals_smart(
 
 
 # --- UI LAYOUT ---
-st.title("✈️ Deal Radar for Vlalix: Chișinău (RMO) ⇄ CGN / DUS / DTM")
+st.title("✈️ Deal Radar: Chișinău (RMO) ⇄ CGN / DUS / DTM")
 st.markdown(
     "Finds **round-trip flights** (3 to 7 days) under **100 €** across **Cologne (CGN)**, **Düsseldorf (DUS)**, and **Dortmund (DTM)**."
 )
@@ -187,7 +185,7 @@ with st.sidebar:
     st.header("⚙️ Search Settings")
     data_mode = st.radio(
         "Mode",
-        ["Demo Mode (Instant Preview)", "Live Scan (Google Flights)"]
+        ["Live Scan (Google Flights)", "Demo Mode (Instant Preview)"]
     )
     
     max_price = st.slider("Max Round-Trip Price (€)", min_value=30, max_value=150, value=100, step=5)
@@ -222,8 +220,8 @@ with st.sidebar:
         )
         months_to_scan = st.slider(
             "Horizon (Months ahead)",
-            min_value=1, max_value=3, value=2,
-            help="Scanning 1-2 months ahead is much faster; increase to 3 for a full quarter scan."
+            min_value=1, max_value=3, value=1,
+            help="Start with 1 month for a fast ~25-second scan on your phone, or slide up to 3 months for a full quarter scan."
         )
         run_live = st.button("🚀 Start Fast Live Scan", type="primary", use_container_width=True)
     else:
@@ -237,7 +235,7 @@ if data_mode == "Demo Mode (Instant Preview)":
         df = df[df["Airport DE"].isin(airport_filter)]
 else:
     if not FAST_FLIGHTS_AVAILABLE:
-        st.error("Package `fast-flights` is missing. Run `pip install fast-flights` in your command prompt.")
+        st.error("Package `fast-flights` is missing. Make sure `requirements.txt` contains `fast-flights`.")
         st.stop()
     if run_live:
         df = fetch_live_deals_smart(
@@ -255,7 +253,7 @@ else:
 # --- DISPLAY RESULTS ---
 if df.empty:
     if data_mode == "Live Scan (Google Flights)" and not run_live:
-        st.info("👈 Select your airports in the sidebar and click **Start Fast Live Scan**.")
+        st.info("👈 Tap the **>** arrow in the top-left corner to open filters, then tap **🚀 Start Fast Live Scan**.")
     else:
         st.warning(f"No round-trip flights found under {max_price} € for your selected filters.")
 else:
